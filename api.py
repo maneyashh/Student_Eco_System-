@@ -14,7 +14,7 @@ GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
     # Using Gemini 1.5 Flash for high-speed JSON generation
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # --- 2. GLOBAL CACHE (Prevents Server Crashes & API Limits) ---
 # This holds the news in memory. If the AI takes too long, it serves this instantly.
