@@ -4,3 +4,4 @@ pydantic
 feedparser
 google-generativeai
 apscheduler
+supabase
