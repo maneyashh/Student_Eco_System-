@@ -1,71 +1,77 @@
 import os
 import json
+import re
 import feedparser
 import google.generativeai as genai
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
+from supabase import create_client, Client
 
-# --- 1. AI CONFIGURATION ---
+# --- 1. ENVIRONMENT & SECURITY KEYS ---
 GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Initialize AI Engine
 if GENAI_API_KEY:
     genai.configure(api_key=GENAI_API_KEY)
-    # Using Gemini 1.5 Flash for high-speed JSON generation
     model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- 2. GLOBAL CACHE (Prevents Server Crashes & API Limits) ---
-# This holds the news in memory. If the AI takes too long, it serves this instantly.
+# Initialize Database Engine
+supabase: Client = None
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- 2. THE PERSISTENT MEMORY CACHE ---
 LATEST_NEWS_CACHE = [
     {
         "id": "backup_01",
         "title": "Backend Systems Live: AI Summarizer Initializing",
         "category": "System Update",
-        "innovation": "The background scheduler is currently fetching the first batch of live news.",
-        "impact": "Ensures zero latency when MIT-WPU students open the dashboard.",
-        "takeaway": "Check back in a few minutes for live AI-summarized engineering tech briefs.",
+        "innovation": "The background scheduler is currently fetching live news.",
+        "impact": "Ensures zero latency for MIT-WPU students upon loading.",
+        "takeaway": "Check back shortly for the first live batch.",
         "read_time": "1 min read",
         "url": "#"
     }
 ]
 
-# --- 3. AUTONOMOUS BACKGROUND JOB ---
+# --- 3. THE AI SAFETY NET & BACKGROUND WORKER ---
+def clean_json_response(raw_text):
+    """Regex cleaner: Strips rogue markdown so the JSON parser never crashes."""
+    match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+    if match:
+        return match.group(0)
+    return raw_text
+
 def fetch_and_summarize_news():
-    """Runs silently every 6 hours to update the news cache."""
     global LATEST_NEWS_CACHE
     try:
         if not GENAI_API_KEY:
-            print("No Gemini API Key found. Serving backup cache.")
             return
 
-        # Fetch top articles from a broad tech source
         feed = feedparser.parse("https://techcrunch.com/feed/")
         new_summaries = []
 
-        for i, entry in enumerate(feed.entries[:4]):  # Process top 4 articles
-            # The Prompt: Ruthlessly enforces JSON output and 3-bullet structure
+        for i, entry in enumerate(feed.entries[:4]):
             prompt = f"""
             Analyze this engineering/tech article:
             Title: {entry.title}
             Summary: {entry.summary}
             
-            Return ONLY a raw JSON object with exactly these string keys and NO markdown formatting:
-            "category": (Classify as Hardware, Software, EV, AI, or General Engineering)
-            "innovation": (1 sentence on the core breakthrough)
-            "impact": (1 sentence on how it affects the industry)
-            "takeaway": (1 sentence on why a first-year B.Tech student should care)
-            "read_time": (Estimate read time, e.g., '3 min read')
+            Return ONLY a raw JSON object with exactly these keys:
+            "category", "innovation", "impact", "takeaway", "read_time"
             """
             
-            # Force the model to output strict JSON for Aditya's frontend
             response = model.generate_content(
                 prompt,
                 generation_config=genai.GenerationConfig(response_mime_type="application/json")
             )
             
-            ai_data = json.loads(response.text)
+            clean_text = clean_json_response(response.text)
+            ai_data = json.loads(clean_text)
             
             new_summaries.append({
                 "id": f"live_news_{i}",
@@ -80,114 +86,59 @@ def fetch_and_summarize_news():
             
         if new_summaries:
             LATEST_NEWS_CACHE = new_summaries
-            print("News cache updated successfully.")
             
     except Exception as e:
         print(f"Background job failed: {e}. Keeping existing cache.")
 
-# --- 4. APP LIFESPAN (Starts the Scheduler) ---
+# --- 4. SYSTEM LIFESPAN CONTROLLER ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run once immediately on server startup
     fetch_and_summarize_news()
-    # Schedule to run every 6 hours automatically
     scheduler = BackgroundScheduler()
     scheduler.add_job(fetch_and_summarize_news, 'interval', hours=6)
     scheduler.start()
     yield
     scheduler.shutdown()
 
-# Initialize App
-app = FastAPI(title="MIT-WPU B.Tech Ecosystem API", version="3.0", lifespan=lifespan)
+# Initialize API Engine
+app = FastAPI(title="MIT-WPU B.Tech API", version="1.0.0", lifespan=lifespan)
 
-# Allow Frontend Connection
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Change to Aditya's Vercel URL later to lock the vault
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 5. DATA MODELS ---
-class NewsItem(BaseModel):
-    id: str
-    title: str
-    category: str
-    innovation: str
-    impact: str
-    takeaway: str
-    read_time: str
-    url: str
+# --- 5. ENTERPRISE ENDPOINTS (v1) ---
 
-class VaultResource(BaseModel):
-    subject: str
-    icon: str
-    primary_playlist: str
-    pyq_drive_link: str
-    quick_notes: str
+@app.get("/health")
+def system_health_check():
+    """Lets the frontend know if the server is awake and connected."""
+    return {
+        "status": "active", 
+        "version": "1.0.0", 
+        "database": "connected" if supabase else "disconnected"
+    }
 
-class RadarEvent(BaseModel):
-    name: str
-    date: str
-    urgency_level: str
-    deadline_hours: int
-    registration_link: str
-
-# --- 6. ENDPOINTS ---
-@app.get("/api/news", response_model=List[NewsItem])
+@app.get("/api/v1/news")
 def get_daily_briefing():
-    # Instantly serves the cache (0.05s load time for the frontend)
+    """Serves the AI-summarized tech news from memory instantly."""
     return LATEST_NEWS_CACHE
 
-@app.get("/api/vault", response_model=List[VaultResource])
-def get_academic_vault():
-    return [
-        VaultResource(
-            subject="Applied Mathematics (Calculus & Linear Algebra)",
-            icon="📐",
-            primary_playlist="https://www.youtube.com/@GajendraPurohitMathematics",
-            pyq_drive_link="https://drive.google.com/drive/folders/mit-wpu-math-pyqs-placeholder",
-            quick_notes="https://tutorial.math.lamar.edu/"
-        ),
-        VaultResource(
-            subject="Engineering Mechanics",
-            icon="⚙️",
-            primary_playlist="https://www.youtube.com/@TiklesAcademy",
-            pyq_drive_link="https://drive.google.com/drive/folders/mit-wpu-mechanics-pyqs-placeholder",
-            quick_notes="https://www.engineeringtoolbox.com/mechanics-t_71.html"
-        ),
-        VaultResource(
-            subject="Python Programming & Logic",
-            icon="🐍",
-            primary_playlist="https://www.youtube.com/@CodeWithHarry",
-            pyq_drive_link="https://drive.google.com/drive/folders/mit-wpu-python-pyqs-placeholder",
-            quick_notes="https://www.w3schools.com/python/"
-        ),
-        VaultResource(
-            subject="Basic Electrical & Electronics (BEE)",
-            icon="⚡",
-            primary_playlist="https://www.youtube.com/@nesoacademy",
-            pyq_drive_link="https://drive.google.com/drive/folders/mit-wpu-bee-pyqs-placeholder",
-            quick_notes="https://www.allaboutcircuits.com/textbook/"
-        )
-    ]
+@app.get("/api/v1/vault")
+def get_dynamic_vault():
+    """Pulls live academic resources directly from the Supabase database."""
+    if not supabase:
+        return {"error": "Database disconnected"}
+    response = supabase.table("vault_resources").select("*").execute()
+    return response.data
 
-@app.get("/api/radar", response_model=List[RadarEvent])
-def get_event_radar():
-    return [
-        RadarEvent(
-            name="Smart India Hackathon 2026",
-            date="Nov 10, 2026",
-            urgency_level="High",
-            deadline_hours=48,
-            registration_link="https://sih.gov.in"
-        ),
-        RadarEvent(
-            name="MIT-WPU Gen AI Bootcamp",
-            date="Oct 30, 2026",
-            urgency_level="Medium",
-            deadline_hours=120,
-            registration_link="https://unstop.com/"
-        )
-    ]
+@app.get("/api/v1/radar")
+def get_dynamic_radar():
+    """Pulls live hackathon and campus events directly from the Supabase database."""
+    if not supabase:
+        return {"error": "Database disconnected"}
+    response = supabase.table("radar_events").select("*").execute()
+    return response.data
