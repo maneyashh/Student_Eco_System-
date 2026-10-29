@@ -113,6 +113,16 @@ app.add_middleware(
 
 # --- 5. ENTERPRISE ENDPOINTS (v1) ---
 
+@app.get("/")
+def read_root():
+    """Provides a professional welcome message at the base URL."""
+    return {
+        "message": "Welcome to the MIT-WPU B.Tech Ecosystem API",
+        "version": "1.0.0",
+        "documentation": "/docs",
+        "status": "Online"
+    }
+
 @app.get("/health")
 def system_health_check():
     """Lets the frontend know if the server is awake and connected."""
