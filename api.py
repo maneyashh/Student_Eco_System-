@@ -89,7 +89,6 @@ def fetch_and_summarize_news():
             
     except Exception as e:
         print(f"Background job failed: {e}. Keeping existing cache.")
-
 # --- 4. SYSTEM LIFESPAN CONTROLLER ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -100,12 +99,30 @@ async def lifespan(app: FastAPI):
     yield
     scheduler.shutdown()
 
-# Initialize API Engine
-app = FastAPI(title="MIT-WPU B.Tech API", version="1.0.0", lifespan=lifespan)
+# --- NEW: BRANDED PORTAL METADATA ---
+tags_metadata = [
+    {"name": "System Health", "description": "Core diagnostics and uptime monitoring."},
+    {"name": "AI Briefing", "description": "Autonomous tech news summaries powered by Gemini 1.5 Flash."},
+    {"name": "Academic Vault", "description": "Live resource retrieval for Semester 1 subjects."},
+    {"name": "Campus Radar", "description": "Real-time hackathon and event tracking."}
+]
+
+# Initialize API Engine with Branding
+app = FastAPI(
+    title="MIT-WPU B.Tech Ecosystem",
+    description="Production-grade backend microservice powering the student dashboard. Features autonomous AI scheduling and Supabase PostgreSQL integration.",
+    version="1.0.0",
+    contact={
+        "name": "Backend Engineering Team",
+        "url": "https://github.com/maneyashh/Student_Eco_System-",
+    },
+    openapi_tags=tags_metadata,
+    lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Change to Aditya's Vercel URL later to lock the vault
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -113,7 +130,7 @@ app.add_middleware(
 
 # --- 5. ENTERPRISE ENDPOINTS (v1) ---
 
-@app.get("/")
+@app.get("/", tags=["System Health"])
 def read_root():
     """Provides a professional welcome message at the base URL."""
     return {
@@ -123,7 +140,7 @@ def read_root():
         "status": "Online"
     }
 
-@app.get("/health")
+@app.get("/health", tags=["System Health"])
 def system_health_check():
     """Lets the frontend know if the server is awake and connected."""
     return {
@@ -132,12 +149,12 @@ def system_health_check():
         "database": "connected" if supabase else "disconnected"
     }
 
-@app.get("/api/v1/news")
+@app.get("/api/v1/news", tags=["AI Briefing"])
 def get_daily_briefing():
     """Serves the AI-summarized tech news from memory instantly."""
     return LATEST_NEWS_CACHE
 
-@app.get("/api/v1/vault")
+@app.get("/api/v1/vault", tags=["Academic Vault"])
 def get_dynamic_vault():
     """Pulls live academic resources directly from the Supabase database."""
     if not supabase:
@@ -145,7 +162,7 @@ def get_dynamic_vault():
     response = supabase.table("vault_resources").select("*").execute()
     return response.data
 
-@app.get("/api/v1/radar")
+@app.get("/api/v1/radar", tags=["Campus Radar"])
 def get_dynamic_radar():
     """Pulls live hackathon and campus events directly from the Supabase database."""
     if not supabase:
